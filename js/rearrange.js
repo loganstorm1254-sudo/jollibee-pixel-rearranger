@@ -1,6 +1,9 @@
 /**
  * Permute source pixels so they reconstruct a target image.
- * Source pixels are never recoloured — only moved.
+ * Colors are never invented — only moved.
+ *
+ * Colorful photos: OKLab 3D-bin greedy in Morton order, then error swaps.
+ * Two-color logos: map onto the dark/light axis of the source palette.
  */
 
 export function srgbToOklab(r, g, b) {
@@ -11,15 +14,12 @@ export function srgbToOklab(r, g, b) {
   R = lin(R);
   G = lin(G);
   B = lin(B);
-
   const l = 0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B;
   const m = 0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B;
   const s = 0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B;
-
   const l_ = Math.cbrt(l);
   const m_ = Math.cbrt(m);
   const s_ = Math.cbrt(s);
-
   return {
     L: 0.2104542553 * l_ + 0.793617785 * m_ - 0.0040720468 * s_,
     a: 1.9779984951 * l_ - 2.428592205 * m_ + 0.4505937099 * s_,
@@ -35,7 +35,14 @@ function colorDist(r, g, b, bg) {
   return Math.abs(r - bg[0]) + Math.abs(g - bg[1]) + Math.abs(b - bg[2]);
 }
 
-function sampleImage(image, maxEdge = 1024) {
+function rgbErr(sr, sg, sb, tr, tg, tb) {
+  const dr = sr - tr;
+  const dg = sg - tg;
+  const db = sb - tb;
+  return dr * dr + dg * dg + db * db;
+}
+
+function sampleImage(image, maxEdge = 1400) {
   const sw = Math.max(1, image.naturalWidth || image.width);
   const sh = Math.max(1, image.naturalHeight || image.height);
   const scale = Math.min(1, maxEdge / Math.max(sw, sh));
@@ -47,7 +54,7 @@ function sampleImage(image, maxEdge = 1024) {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   ctx.clearRect(0, 0, w, h);
   ctx.drawImage(image, 0, 0, w, h);
-  return { canvas, ctx, data: ctx.getImageData(0, 0, w, h), w, h };
+  return { canvas, data: ctx.getImageData(0, 0, w, h), w, h };
 }
 
 function cornerBackground(data, w, h) {
@@ -83,9 +90,7 @@ function contentBounds(data, w, h) {
       const r = d[o];
       const g = d[o + 1];
       const b = d[o + 2];
-      const empty = hasAlpha
-        ? a < 16
-        : a < 16 || colorDist(r, g, b, bg) < thresh;
+      const empty = hasAlpha ? a < 16 : a < 16 || colorDist(r, g, b, bg) < thresh;
       if (empty) continue;
       if (x < minX) minX = x;
       if (y < minY) minY = y;
@@ -100,8 +105,7 @@ function contentBounds(data, w, h) {
     return { minX: 0, minY: 0, maxX: w - 1, maxY: h - 1, fill: [255, 255, 255], contentCount: 0 };
   }
 
-  const avg = contentCount ? contentLuma / contentCount : 128;
-  const fill = avg < 140 ? [255, 255, 255] : [0, 0, 0];
+  const fill = contentLuma / contentCount < 140 ? [255, 255, 255] : [0, 0, 0];
   const padX = Math.max(2, Math.round((maxX - minX + 1) * 0.04));
   const padY = Math.max(2, Math.round((maxY - minY + 1) * 0.04));
   return {
@@ -133,22 +137,12 @@ export function rasterizeSource(image, size) {
   ctx.imageSmoothingQuality = "high";
 
   if (isLogo) {
-    const pad = Math.max(4, Math.round(size * 0.04));
+    const pad = Math.max(4, Math.round(size * 0.03));
     const inner = size - pad * 2;
     const scale = Math.min(inner / cw, inner / ch);
     const dw = cw * scale;
     const dh = ch * scale;
-    ctx.drawImage(
-      sample.canvas,
-      bounds.minX,
-      bounds.minY,
-      cw,
-      ch,
-      (size - dw) / 2,
-      (size - dh) / 2,
-      dw,
-      dh
-    );
+    ctx.drawImage(sample.canvas, bounds.minX, bounds.minY, cw, ch, (size - dw) / 2, (size - dh) / 2, dw, dh);
   } else {
     const scale = Math.max(size / sample.w, size / sample.h);
     const w = sample.w * scale;
@@ -164,34 +158,28 @@ export function rasterizeStretch(image, size) {
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(image, 0, 0, size, size);
   return ctx.getImageData(0, 0, size, size);
 }
 
 function paletteSpread(pixels, count) {
-  let minL = 1;
-  let maxL = 0;
-  let chroma = 0;
   const bins = new Set();
-  const step = Math.max(1, (count / 4000) | 0);
+  let chroma = 0;
   let n = 0;
+  const step = Math.max(1, (count / 5000) | 0);
   for (let i = 0; i < count; i += step) {
     const o = i * 4;
     const r = pixels[o];
     const g = pixels[o + 1];
     const b = pixels[o + 2];
     const lab = srgbToOklab(r, g, b);
-    if (lab.L < minL) minL = lab.L;
-    if (lab.L > maxL) maxL = lab.L;
     chroma += Math.abs(lab.a) + Math.abs(lab.b);
-    bins.add((r >> 4) << 8 | (g >> 4) << 4 | (b >> 4));
+    bins.add(((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4));
     n++;
   }
-  return {
-    lumaRange: maxL - minL,
-    meanChroma: chroma / Math.max(1, n),
-    uniqueBins: bins.size,
-  };
+  return { meanChroma: chroma / Math.max(1, n), uniqueBins: bins.size };
 }
 
 function axisColors(pixels, count) {
@@ -225,79 +213,204 @@ function dist2(r, g, b, color) {
   return dr * dr + dg * dg + db * db;
 }
 
-export function rearrangePixels(source, target, options = {}) {
-  const { colorWeight = 0.18, seed = 1 } = options;
-  const count = source.length >> 2;
-  const spread = paletteSpread(source, count);
-  const limited = spread.uniqueBins < 28 || spread.meanChroma < 0.08;
-  const weight = limited ? 0 : colorWeight;
-  const axis = limited ? axisColors(source, count) : null;
+function part1by1(n) {
+  n &= 0x1ff;
+  n = (n | (n << 8)) & 0x00ff00ff;
+  n = (n | (n << 4)) & 0x0f0f0f0f;
+  n = (n | (n << 2)) & 0x33333333;
+  n = (n | (n << 1)) & 0x55555555;
+  return n;
+}
 
-  const srcKeys = new Float64Array(count);
-  const tgtKeys = new Float64Array(count);
+function morton2(x, y) {
+  return (part1by1(y) << 1) | part1by1(x);
+}
+
+function mulberry(seed) {
+  let t = seed | 0;
+  return () => {
+    t += 0x6d2b79f5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function sortAssign(srcKeys, tgtKeys, count) {
   const srcOrder = new Uint32Array(count);
   const tgtOrder = new Uint32Array(count);
-
-  let rng = seed || 1;
-  const rand = () => {
-    rng = (rng * 16807) % 2147483647;
-    return rng / 2147483647;
-  };
-
   for (let i = 0; i < count; i++) {
-    const o = i * 4;
-    if (limited) {
-      const key = (r, g, b) =>
-        dist2(r, g, b, axis.light) - dist2(r, g, b, axis.dark) + i * 1e-6;
-      srcKeys[i] = key(source[o], source[o + 1], source[o + 2]);
-      tgtKeys[i] = key(target[o], target[o + 1], target[o + 2]);
-    } else {
-      const sLab = srgbToOklab(source[o], source[o + 1], source[o + 2]);
-      const tLab = srgbToOklab(target[o], target[o + 1], target[o + 2]);
-      const pack = (lab) => {
-        const lumaKey = lab.L * 100;
-        const chromaKey = (lab.a + 0.4) * 40 + (lab.b + 0.4);
-        const lumaScale = 1 + 24 * (1 - weight);
-        const chromaScale = 1 + 18 * weight;
-        return lumaKey * lumaScale * 1e4 + chromaKey * chromaScale * 10 + rand() * 0.8;
-      };
-      srcKeys[i] = pack(sLab);
-      tgtKeys[i] = pack(tLab);
-    }
     srcOrder[i] = i;
     tgtOrder[i] = i;
   }
-
   srcOrder.sort((a, b) => srcKeys[a] - srcKeys[b]);
   tgtOrder.sort((a, b) => tgtKeys[a] - tgtKeys[b]);
+  const srcAt = new Uint32Array(count);
+  for (let k = 0; k < count; k++) srcAt[tgtOrder[k]] = srcOrder[k];
+  return srcAt;
+}
 
-  const pixels = new Uint8ClampedArray(source.length);
-  const from = new Uint32Array(count);
-  const to = new Uint32Array(count);
+function limitedAssign(source, target, count) {
+  const axis = axisColors(source, count);
+  const srcKeys = new Float64Array(count);
+  const tgtKeys = new Float64Array(count);
+  for (let i = 0; i < count; i++) {
+    const o = i * 4;
+    srcKeys[i] =
+      dist2(source[o], source[o + 1], source[o + 2], axis.light) -
+      dist2(source[o], source[o + 1], source[o + 2], axis.dark);
+    tgtKeys[i] =
+      dist2(target[o], target[o + 1], target[o + 2], axis.light) -
+      dist2(target[o], target[o + 1], target[o + 2], axis.dark);
+  }
+  return sortAssign(srcKeys, tgtKeys, count);
+}
 
-  let errorAcc = 0;
-  for (let k = 0; k < count; k++) {
-    const srcI = srcOrder[k];
-    const tgtI = tgtOrder[k];
-    const s = srcI * 4;
-    const t = tgtI * 4;
-    pixels[t] = source[s];
-    pixels[t + 1] = source[s + 1];
-    pixels[t + 2] = source[s + 2];
-    pixels[t + 3] = 255;
-    from[k] = srcI;
-    to[k] = tgtI;
+function labArrays(pixels, count) {
+  const L = new Float32Array(count);
+  const A = new Float32Array(count);
+  const B = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const o = i * 4;
+    const lab = srgbToOklab(pixels[o], pixels[o + 1], pixels[o + 2]);
+    L[i] = lab.L;
+    A[i] = lab.a;
+    B[i] = lab.b;
+  }
+  return { L, A, B };
+}
 
-    const dr = source[s] - target[t];
-    const dg = source[s + 1] - target[t + 1];
-    const db = source[s + 2] - target[t + 2];
-    errorAcc += dr * dr + dg * dg + db * db;
+function binGreedyAssign(source, target, count, size) {
+  const N = 20;
+  const binCount = N * N * N;
+  const srcLab = labArrays(source, count);
+  const tgtLab = labArrays(target, count);
+  const heads = new Int32Array(binCount).fill(-1);
+  const next = new Int32Array(count);
+
+  const toBin = (L, a, b) => {
+    const li = Math.min(N - 1, Math.max(0, (L * N) | 0));
+    const ai = Math.min(N - 1, Math.max(0, (((a + 0.45) / 0.9) * N) | 0));
+    const bi = Math.min(N - 1, Math.max(0, (((b + 0.45) / 0.9) * N) | 0));
+    return (li * N + ai) * N + bi;
+  };
+
+  for (let i = 0; i < count; i++) {
+    const id = toBin(srcLab.L[i], srcLab.A[i], srcLab.B[i]);
+    next[i] = heads[id];
+    heads[id] = i;
   }
 
-  return {
-    pixels,
-    from,
-    to,
-    meanError: Math.sqrt(errorAcc / count),
+  const nonempty = [];
+  for (let id = 0; id < binCount; id++) if (heads[id] >= 0) nonempty.push(id);
+
+  const pop = (id) => {
+    const i = heads[id];
+    heads[id] = next[i];
+    return i;
   };
+
+  const popNearest = (L, a, b) => {
+    const li = Math.min(N - 1, Math.max(0, (L * N) | 0));
+    const ai = Math.min(N - 1, Math.max(0, (((a + 0.45) / 0.9) * N) | 0));
+    const bi = Math.min(N - 1, Math.max(0, (((b + 0.45) / 0.9) * N) | 0));
+    for (let r = 0; r <= 6; r++) {
+      const l0 = Math.max(0, li - r);
+      const l1 = Math.min(N - 1, li + r);
+      const a0 = Math.max(0, ai - r);
+      const a1 = Math.min(N - 1, ai + r);
+      const b0 = Math.max(0, bi - r);
+      const b1 = Math.min(N - 1, bi + r);
+      for (let l = l0; l <= l1; l++) {
+        for (let aa = a0; aa <= a1; aa++) {
+          for (let bb = b0; bb <= b1; bb++) {
+            if (r > 0 && l > l0 && l < l1 && aa > a0 && aa < a1 && bb > b0 && bb < b1) continue;
+            const id = (l * N + aa) * N + bb;
+            if (heads[id] >= 0) return pop(id);
+          }
+        }
+      }
+    }
+    while (nonempty.length) {
+      const id = nonempty[nonempty.length - 1];
+      if (heads[id] >= 0) return pop(id);
+      nonempty.pop();
+    }
+    return 0;
+  };
+
+  const visit = new Uint32Array(count);
+  const mortonKeys = new Uint32Array(count);
+  for (let i = 0; i < count; i++) {
+    visit[i] = i;
+    mortonKeys[i] = morton2(i % size, (i / size) | 0);
+  }
+  visit.sort((a, b) => mortonKeys[a] - mortonKeys[b]);
+
+  const srcAt = new Uint32Array(count);
+  for (let v = 0; v < count; v++) {
+    const t = visit[v];
+    srcAt[t] = popNearest(tgtLab.L[t], tgtLab.A[t], tgtLab.B[t]);
+  }
+  return srcAt;
+}
+
+function refineSwaps(source, target, srcAt, count, passes, rand) {
+  for (let p = 0; p < passes; p++) {
+    for (let i = 0; i < count; i++) {
+      const j = (rand() * count) | 0;
+      if (j === i) continue;
+      const a = srcAt[i] * 4;
+      const b = srcAt[j] * 4;
+      const t0 = i * 4;
+      const t1 = j * 4;
+      const before =
+        rgbErr(source[a], source[a + 1], source[a + 2], target[t0], target[t0 + 1], target[t0 + 2]) +
+        rgbErr(source[b], source[b + 1], source[b + 2], target[t1], target[t1 + 1], target[t1 + 2]);
+      const after =
+        rgbErr(source[b], source[b + 1], source[b + 2], target[t0], target[t0 + 1], target[t0 + 2]) +
+        rgbErr(source[a], source[a + 1], source[a + 2], target[t1], target[t1 + 1], target[t1 + 2]);
+      if (after < before) {
+        const tmp = srcAt[i];
+        srcAt[i] = srcAt[j];
+        srcAt[j] = tmp;
+      }
+    }
+  }
+}
+
+function packResult(source, target, srcAt, count) {
+  const pixels = new Uint8ClampedArray(count * 4);
+  const from = new Uint32Array(count);
+  const to = new Uint32Array(count);
+  let errorAcc = 0;
+  for (let t = 0; t < count; t++) {
+    const s = srcAt[t] * 4;
+    const o = t * 4;
+    pixels[o] = source[s];
+    pixels[o + 1] = source[s + 1];
+    pixels[o + 2] = source[s + 2];
+    pixels[o + 3] = 255;
+    from[t] = srcAt[t];
+    to[t] = t;
+    errorAcc += rgbErr(source[s], source[s + 1], source[s + 2], target[o], target[o + 1], target[o + 2]);
+  }
+  return { pixels, from, to, meanError: Math.sqrt(errorAcc / count) };
+}
+
+export function rearrangePixels(source, target, options = {}) {
+  const { seed = 1, size = Math.sqrt(source.length >> 2) | 0 } = options;
+  const count = source.length >> 2;
+  const spread = paletteSpread(source, count);
+  const limited = spread.uniqueBins < 28 || spread.meanChroma < 0.08;
+  const srcAt = limited
+    ? limitedAssign(source, target, count)
+    : binGreedyAssign(source, target, count, size);
+
+  if (!limited) {
+    const passes = count > 160000 ? 1 : 2;
+    refineSwaps(source, target, srcAt, count, passes, mulberry(seed));
+  }
+
+  return packResult(source, target, srcAt, count);
 }
