@@ -1,0 +1,9 @@
+{
+  "name": "jollibee-pixel-rearranger",
+  "private": true,
+  "description": "Upload any image and permute its pixels until they reconstruct Jollibee.",
+  "scripts": {
+    "start": "python3 -m http.server 4173",
+    "dev": "python3 -m http.server 4173"
+  }
+}

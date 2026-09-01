@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pixel Bee — rearrange any photo into Jollibee</title>
+    <meta
+      name="description"
+      content="Upload any image. Its pixels are permuted — never recoloured — until they reconstruct the Jollibee mascot."
+    />
+    <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./css/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <p class="kicker">Pixel permutation</p>
+          <h1>Turn any photo into Jollibee.</h1>
+          <p class="lede">
+            Same pixels. New places. Upload a picture and the algorithm sorts every
+            pixel by color until the photo reconstructs this mascot — without
+            inventing a single new color.
+          </p>
+        </div>
+        <div class="badge">Vercel-ready static app</div>
+      </header>
+
+      <section class="panel controls">
+        <div
+          id="drop"
+          class="drop"
+          tabindex="0"
+          role="button"
+          aria-label="Upload an image"
+        >
+          <div>
+            <strong>Drop a photo, click, or paste</strong>
+            <span>PNG, JPG, WEBP, GIF · square-cropped automatically</span>
+            <span id="filename" class="filename"></span>
+          </div>
+          <input id="file" type="file" accept="image/*" hidden />
+        </div>
+
+        <div class="fields">
+          <label>
+            Resolution
+            <select id="size">
+              <option value="128">128 × 128 — fast</option>
+              <option value="256" selected>256 × 256 — balanced</option>
+              <option value="384">384 × 384 — sharp</option>
+              <option value="512">512 × 512 — full target</option>
+            </select>
+          </label>
+          <label>
+            Color match <span id="colorWeightValue">0.18</span>
+            <input id="colorWeight" type="range" min="0" max="1" step="0.01" value="0.18" />
+          </label>
+          <label class="check">
+            <input id="animate" type="checkbox" checked />
+            Animate the shuffle
+          </label>
+          <div class="actions">
+            <button id="run" class="primary" type="button" disabled>Rearrange</button>
+            <button id="download" class="ghost" type="button" disabled>Download PNG</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="stage">
+        <figure>
+          <figcaption>Your pixels</figcaption>
+          <canvas id="sourceCanvas" width="256" height="256"></canvas>
+        </figure>
+        <figure>
+          <figcaption>Target</figcaption>
+          <canvas id="targetCanvas" width="256" height="256"></canvas>
+        </figure>
+        <figure>
+          <figcaption>Rearranged</figcaption>
+          <canvas id="resultCanvas" width="256" height="256"></canvas>
+        </figure>
+      </section>
+      <p id="status" class="status">Loading target…</p>
+      <p id="errorMetric" class="metric"></p>
+
+      <section class="panel how">
+        <h2>How it works</h2>
+        <ol>
+          <li>Your photo is center-cropped to a square and scaled to the target grid.</li>
+          <li>Both images are converted to OKLab. Each pixel gets a sort key: luminance first, then hue.</li>
+          <li>Source pixels and target positions are sorted by that key and zipped together — a permutation, not a recolor.</li>
+          <li>Darkest pixels become outlines, brightest pixels become the hat and muzzle, everything else fills the red.</li>
+        </ol>
+      </section>
+    </main>
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>
