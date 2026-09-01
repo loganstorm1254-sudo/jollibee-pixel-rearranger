@@ -5,17 +5,20 @@ const TARGET_SRC = "./assets/target.png";
 const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp|svg|avif|heic|heif)$/i;
 
 const els = {
-  app: document.getElementById("app"),
-  frame: document.getElementById("frame"),
-  view: document.getElementById("view"),
-  fly: document.getElementById("fly"),
   drop: document.getElementById("drop"),
   file: document.getElementById("file"),
+  run: document.getElementById("run"),
   download: document.getElementById("download"),
   status: document.getElementById("status"),
   size: document.getElementById("size"),
+  animate: document.getElementById("animate"),
   sourceCanvas: document.getElementById("sourceCanvas"),
   targetCanvas: document.getElementById("targetCanvas"),
+  view: document.getElementById("view"),
+  fly: document.getElementById("fly"),
+  frame: document.getElementById("frame"),
+  filename: document.getElementById("filename"),
+  errorMetric: document.getElementById("errorMetric"),
 };
 
 let sourceImage = null;
@@ -81,17 +84,8 @@ function drawImageData(canvas, imageData, smooth = false) {
   tmp.height = imageData.height;
   tmp.getContext("2d").putImageData(imageData, 0, 0);
   ctx.imageSmoothingEnabled = smooth;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(tmp, 0, 0, canvas.width, canvas.height);
-}
-
-function fitSquareCanvas(canvas, pixels) {
-  const css = canvas.getBoundingClientRect().width || pixels;
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const dim = Math.max(pixels, Math.round(css * dpr));
-  if (canvas.width !== dim || canvas.height !== dim) {
-    canvas.width = dim;
-    canvas.height = dim;
-  }
 }
 
 function asImageData(pixels, size) {
@@ -137,47 +131,37 @@ function runInWorker(sourceData, targetData, size) {
   });
 }
 
-function showResult(imageData) {
-  fitSquareCanvas(els.view, imageData.width);
-  drawImageData(els.view, imageData, false);
+function paintCanvas(canvas, imageData) {
+  canvas.width = imageData.width;
+  canvas.height = imageData.height;
+  drawImageData(canvas, imageData, false);
 }
 
-function paintThumb(canvas, image, mode, size = 96) {
-  const data = mode === "source" ? rasterizeSource(image, size) : rasterizeStretch(image, size);
-  canvas.width = size;
-  canvas.height = size;
-  drawImageData(canvas, data, false);
-  return data;
+function refreshPreviews() {
+  if (!targetImage) return;
+  const size = Number(els.size.value);
+  targetPreview = rasterizeStretch(targetImage, size);
+  paintCanvas(els.targetCanvas, targetPreview);
+  if (sourceImage) {
+    paintCanvas(els.sourceCanvas, rasterizeSource(sourceImage, size));
+    els.run.disabled = false;
+  }
 }
 
 async function rearrange() {
   if (!sourceImage || !targetImage || running) return;
   running = true;
+  els.run.disabled = true;
   els.download.disabled = true;
-  els.frame.classList.remove("is-empty");
-  setStatus("Matching…");
+  setStatus("Matching pixels…");
 
   const size = Number(els.size.value);
-  const previewSize = 128;
-  const sourcePreview = rasterizeSource(sourceImage, previewSize);
-  const targetSmall = rasterizeStretch(targetImage, previewSize);
-  paintThumb(els.sourceCanvas, sourceImage, "source");
-  targetPreview = rasterizeStretch(targetImage, size);
-  paintThumb(els.targetCanvas, targetImage, "target");
-
-  fitSquareCanvas(els.view, previewSize);
-  showResult(sourcePreview);
-
-  try {
-    const preview = runOnMainThread(sourcePreview.data, targetSmall.data, previewSize);
-    showResult(asImageData(preview.pixels, previewSize));
-  } catch {
-    /* preview is optional */
-  }
-
   const sourceData = rasterizeSource(sourceImage, size);
-  const targetData = targetPreview;
-  paintThumb(els.sourceCanvas, sourceImage, "source");
+  const targetData = rasterizeStretch(targetImage, size);
+  targetPreview = targetData;
+  paintCanvas(els.sourceCanvas, sourceData);
+  paintCanvas(els.targetCanvas, targetData);
+  paintCanvas(els.view, sourceData);
 
   const t0 = performance.now();
   let result;
@@ -190,32 +174,41 @@ async function rearrange() {
   const imageData = asImageData(result.pixels, size);
   lastResult = { pixels: imageData.data, size, imageData };
 
-  fitSquareCanvas(els.fly, size);
-  try {
-    await flyPixels(els.fly, {
-      size,
-      packed: packedFromMapping(sourceData.data, result.from),
-      from: result.from,
-      to: result.to,
-      view: els.view,
-    });
-  } catch {
-    /* still show the still */
+  els.fly.width = size;
+  els.fly.height = size;
+  if (els.animate.checked) {
+    try {
+      await flyPixels(els.fly, {
+        size,
+        packed: packedFromMapping(sourceData.data, result.from),
+        from: result.from,
+        to: result.to,
+        view: els.view,
+      });
+    } catch {
+      /* still show the still */
+    }
   }
-  showResult(imageData);
+
+  paintCanvas(els.view, imageData);
+  els.run.disabled = false;
   els.download.disabled = false;
   running = false;
-  setStatus(`${size}×${size} · ${ms}ms · hold to compare`);
+  setStatus("Done. Same pixels, new places.", "ok");
+  els.errorMetric.textContent = `${size}×${size} · ${ms}ms · hold the result to compare`;
 }
 
 async function onFile(file) {
+  if (!file) return;
   if (!isImageFile(file)) {
     setStatus("Use a PNG, JPG, SVG, WEBP, or GIF.", "error");
     return;
   }
   try {
     sourceImage = await loadFileAsImage(file);
+    els.filename.textContent = file.name || "image";
     lastResult = null;
+    refreshPreviews();
     await rearrange();
   } catch {
     setStatus("Could not read that image.", "error");
@@ -237,25 +230,37 @@ function downloadResult() {
 function setComparing(on) {
   if (!lastResult || !targetPreview || running) return;
   comparing = on;
-  showResult(on ? targetPreview : lastResult.imageData);
+  paintCanvas(els.view, on ? targetPreview : lastResult.imageData);
 }
 
 els.drop.addEventListener("click", () => els.file.click());
-els.sourceCanvas.addEventListener("click", () => els.file.click());
+els.drop.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    els.file.click();
+  }
+});
 els.file.addEventListener("change", (e) => onFile(e.target.files[0]));
 
 ["dragenter", "dragover"].forEach((type) => {
-  window.addEventListener(type, (e) => {
+  els.drop.addEventListener(type, (e) => {
     e.preventDefault();
-    els.frame.classList.add("is-over");
+    els.drop.classList.add("is-over");
   });
 });
-window.addEventListener("dragleave", () => els.frame.classList.remove("is-over"));
+["dragleave", "drop"].forEach((type) => {
+  els.drop.addEventListener(type, (e) => {
+    e.preventDefault();
+    els.drop.classList.remove("is-over");
+  });
+});
+els.drop.addEventListener("drop", (e) => onFile(e.dataTransfer.files[0]));
 window.addEventListener("drop", (e) => {
+  if (e.target.closest?.("#drop")) return;
   e.preventDefault();
-  els.frame.classList.remove("is-over");
   onFile(e.dataTransfer.files[0]);
 });
+window.addEventListener("dragover", (e) => e.preventDefault());
 
 window.addEventListener("paste", (e) => {
   const file = [...(e.clipboardData?.items || [])]
@@ -270,17 +275,18 @@ els.frame.addEventListener("pointerleave", () => {
   if (comparing) setComparing(false);
 });
 
+els.run.addEventListener("click", rearrange);
 els.download.addEventListener("click", downloadResult);
 els.size.addEventListener("change", () => {
+  refreshPreviews();
   if (sourceImage) rearrange();
 });
 
 async function boot() {
   try {
     targetImage = await loadImage(TARGET_SRC);
-    paintThumb(els.targetCanvas, targetImage, "target");
-    fitSquareCanvas(els.view, 512);
-    drawImageData(els.view, rasterizeStretch(targetImage, 512), false);
+    refreshPreviews();
+    setStatus("Drop any photo to begin.");
   } catch {
     setStatus("Could not load the target image.", "error");
   }

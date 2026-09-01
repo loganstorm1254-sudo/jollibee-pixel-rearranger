@@ -169,7 +169,7 @@ export function flyPixels(glCanvas, opts) {
     const step = (now) => {
       const t = Math.min(1, (now - start) / duration);
       gl.viewport(0, 0, glCanvas.width, glCanvas.height);
-      gl.clearColor(0.08, 0.03, 0.03, 1);
+      gl.clearColor(1.0, 0.965, 0.918, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.uniform1f(uT, t);
       gl.uniform1f(uPoint, point);
