@@ -4,27 +4,18 @@ Upload any photo. The app **rearranges that photo's own pixels** until they reco
 
 Works as a static site on Vercel. All matching runs in the browser.
 
-## Push to GitHub
+## GitHub
 
-From this folder:
-
-```bash
-git remote add origin https://github.com/YOUR_USER/jollibee-pixel-rearranger.git
-git push -u origin main
-```
-
-Create the empty repo first at [github.com/new](https://github.com/new) (name: `jollibee-pixel-rearranger`, public, no README).
+https://github.com/loganstorm1254-sudo/jollibee-pixel-rearranger
 
 ## Deploy on Vercel
 
-1. Go to [vercel.com/new](https://vercel.com/new) and import `jollibee-pixel-rearranger`.
+1. Go to [vercel.com/new](https://vercel.com/new) and import `loganstorm1254-sudo/jollibee-pixel-rearranger`.
 2. Leave the defaults:
    - Framework preset: **Other**
    - Build command: empty
    - Output directory: empty (root)
 3. Hit **Deploy**.
-
-That's it. Vercel will serve `index.html` and the JS modules as a static app.
 
 ## Run locally
 
