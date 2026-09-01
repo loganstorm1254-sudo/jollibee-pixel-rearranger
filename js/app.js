@@ -1,6 +1,7 @@
-import { rasterizeCover, rasterizeStretch, rearrangePixels } from "./rearrange.js";
+import { rasterizeSource, rasterizeStretch, rearrangePixels } from "./rearrange.js";
 
 const TARGET_SRC = "./assets/target.png";
+const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp|svg|avif|heic|heif)$/i;
 
 const els = {
   drop: document.getElementById("drop"),
@@ -29,6 +30,15 @@ function setStatus(text, kind = "") {
   els.status.dataset.kind = kind;
 }
 
+function isImageFile(file) {
+  if (!file) return false;
+  if (file.type.startsWith("image/")) return true;
+  if (file.type === "application/octet-stream" || file.type === "") {
+    return IMAGE_EXT.test(file.name);
+  }
+  return false;
+}
+
 function loadImage(src) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -36,6 +46,32 @@ function loadImage(src) {
     img.onerror = () => reject(new Error(`Could not load ${src}`));
     img.src = src;
   });
+}
+
+async function loadFileAsImage(file) {
+  const isSvg = /svg/.test(file.type) || /\.svg$/i.test(file.name);
+  let blob = file;
+  if (isSvg) {
+    let text = await file.text();
+    if (!/\swidth\s*=/.test(text) || !/\sheight\s*=/.test(text)) {
+      const vb = text.match(/viewBox\s*=\s*["']([^"']+)["']/i);
+      const parts = vb ? vb[1].trim().split(/[\s,]+/).map(Number) : [0, 0, 1024, 1024];
+      const w = parts[2] || 1024;
+      const h = parts[3] || 1024;
+      text = text.replace(/<svg\b/i, `<svg width="${w}" height="${h}"`);
+    }
+    blob = new Blob([text], { type: "image/svg+xml" });
+  }
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await loadImage(url);
+    if (!img.width || !img.height) {
+      throw new Error("empty image");
+    }
+    return img;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 function drawImageData(canvas, imageData) {
@@ -47,41 +83,35 @@ function drawImageData(canvas, imageData) {
 
 function paintImage(canvas, image, mode) {
   const size = Number(els.size.value);
-  const data = mode === "cover" ? rasterizeCover(image, size) : rasterizeStretch(image, size);
+  const data = mode === "source" ? rasterizeSource(image, size) : rasterizeStretch(image, size);
   drawImageData(canvas, data);
   return data;
 }
 
 async function refreshPreviews() {
   if (!targetImage) return;
-  paintImage(els.targetCanvas, targetImage, "stretch");
+  paintImage(els.targetCanvas, targetImage, "target");
   if (sourceImage) {
-    paintImage(els.sourceCanvas, sourceImage, "cover");
+    paintImage(els.sourceCanvas, sourceImage, "source");
     els.run.disabled = false;
   }
 }
 
-function onFile(file) {
-  if (!file || !file.type.startsWith("image/")) {
-    setStatus("Please drop a PNG, JPG, WEBP, or GIF.", "error");
+async function onFile(file) {
+  if (!isImageFile(file)) {
+    setStatus("Use a PNG, JPG, SVG, WEBP, or GIF.", "error");
     return;
   }
-  const url = URL.createObjectURL(file);
-  const img = new Image();
-  img.onload = () => {
-    sourceImage = img;
-    els.filename.textContent = file.name;
+  try {
+    sourceImage = await loadFileAsImage(file);
+    els.filename.textContent = file.name || "image";
     els.download.disabled = true;
     lastResult = null;
-    refreshPreviews();
-    setStatus("Photo loaded. Hit Rearrange.");
-    URL.revokeObjectURL(url);
-  };
-  img.onerror = () => {
+    await refreshPreviews();
+    setStatus("");
+  } catch {
     setStatus("Could not read that image.", "error");
-    URL.revokeObjectURL(url);
-  };
-  img.src = url;
+  }
 }
 
 function easeInOutCubic(t) {
@@ -138,7 +168,7 @@ function animateResult(size, packed, from, to) {
   animFrame = requestAnimationFrame(step);
 }
 
-function packedFromMapping(sourceData, from, to) {
+function packedFromMapping(sourceData, from) {
   const count = from.length;
   const packed = new Uint8ClampedArray(count * 4);
   for (let i = 0; i < count; i++) {
@@ -152,13 +182,20 @@ function packedFromMapping(sourceData, from, to) {
   return packed;
 }
 
+function asImageData(pixels, size) {
+  const copy = new Uint8ClampedArray(pixels);
+  return new ImageData(copy, size, size);
+}
+
 function runOnMainThread(sourceData, targetData, colorWeight) {
   return rearrangePixels(sourceData, targetData, { colorWeight });
 }
 
 function runInWorker(sourceData, targetData, colorWeight) {
   return new Promise((resolve, reject) => {
-    const worker = new Worker("./js/worker.js", { type: "module" });
+    const workerUrl = new URL("./worker.js", import.meta.url);
+    workerUrl.searchParams.set("v", "2");
+    const worker = new Worker(workerUrl, { type: "module" });
     worker.onmessage = (event) => {
       worker.terminate();
       resolve(event.data);
@@ -168,8 +205,8 @@ function runInWorker(sourceData, targetData, colorWeight) {
       reject(err);
     };
     worker.postMessage({
-      source: sourceData,
-      target: targetData,
+      source: new Uint8ClampedArray(sourceData),
+      target: new Uint8ClampedArray(targetData),
       colorWeight,
     });
   });
@@ -181,9 +218,9 @@ async function rearrange() {
   const colorWeight = Number(els.colorWeight.value);
   els.run.disabled = true;
   els.download.disabled = true;
-  setStatus("Matching pixels…");
+  setStatus("Matching…");
 
-  const sourceData = rasterizeCover(sourceImage, size);
+  const sourceData = rasterizeSource(sourceImage, size);
   const targetData = rasterizeStretch(targetImage, size);
   drawImageData(els.sourceCanvas, sourceData);
   drawImageData(els.targetCanvas, targetData);
@@ -197,26 +234,26 @@ async function rearrange() {
   }
   const ms = Math.round(performance.now() - t0);
 
+  const imageData = asImageData(result.pixels, size);
   lastResult = {
-    pixels: result.pixels,
+    pixels: imageData.data,
     size,
     meanError: result.meanError,
   };
 
-  els.errorMetric.textContent = `mean color error ${result.meanError.toFixed(1)} · ${size}×${size} · ${ms}ms`;
+  els.errorMetric.textContent = `${size}×${size} · ${ms}ms`;
 
   if (els.animate.checked) {
-    const packed = packedFromMapping(sourceData.data, result.from, result.to);
+    const packed = packedFromMapping(sourceData.data, result.from);
     animateResult(size, packed, result.from, result.to);
   } else {
     cancelAnimationFrame(animFrame);
-    const imageData = new ImageData(result.pixels, size, size);
     drawImageData(els.resultCanvas, imageData);
   }
 
   els.run.disabled = false;
   els.download.disabled = false;
-  setStatus("Done. Same pixels, new places.", "ok");
+  setStatus("");
 }
 
 function downloadResult() {
@@ -224,11 +261,7 @@ function downloadResult() {
   const canvas = document.createElement("canvas");
   canvas.width = lastResult.size;
   canvas.height = lastResult.size;
-  canvas.getContext("2d").putImageData(
-    new ImageData(lastResult.pixels, lastResult.size, lastResult.size),
-    0,
-    0
-  );
+  canvas.getContext("2d").putImageData(asImageData(lastResult.pixels, lastResult.size), 0, 0);
   const a = document.createElement("a");
   a.href = canvas.toDataURL("image/png");
   a.download = "jollibee-pixels.png";
@@ -276,7 +309,7 @@ async function boot() {
   try {
     targetImage = await loadImage(TARGET_SRC);
     await refreshPreviews();
-    setStatus("Drop any photo to begin.");
+    setStatus("");
   } catch {
     setStatus("Could not load the target image.", "error");
   }

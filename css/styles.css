@@ -1,9 +1,7 @@
 :root {
   --red: #e31b23;
-  --red-deep: #9b0f16;
   --ink: #140808;
   --cream: #fff6ea;
-  --gold: #ffd54a;
   --line: #1a0a0a;
   --muted: #7a4a4a;
   --card: #fffdf8;
@@ -23,57 +21,13 @@ body {
 body {
   font-family: "Nunito", system-ui, sans-serif;
   color: var(--ink);
-  background:
-    radial-gradient(circle at 12% 0%, #ffd54a33, transparent 42%),
-    radial-gradient(circle at 100% 80%, #e31b2322, transparent 40%),
-    var(--cream);
+  background: var(--cream);
 }
 
 .page {
   width: min(1120px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 28px 0 64px;
-}
-
-.hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  align-items: end;
-  margin-bottom: 28px;
-}
-
-.kicker {
-  margin: 0 0 8px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--red);
-  font-size: 12px;
-}
-
-h1 {
-  margin: 0;
-  font-size: clamp(36px, 6vw, 64px);
-  line-height: 0.9;
-  letter-spacing: -0.04em;
-}
-
-.lede {
-  max-width: 54ch;
-  margin: 12px 0 0;
-  font-size: 17px;
-}
-
-.badge {
-  background: var(--red);
-  color: white;
-  border: 3px solid var(--line);
-  box-shadow: var(--shadow);
-  padding: 10px 14px;
-  font-weight: 800;
-  white-space: nowrap;
-  transform: rotate(3deg);
+  padding: 24px 0 48px;
 }
 
 .panel {
@@ -226,11 +180,6 @@ canvas {
   min-height: 1.4em;
 }
 
-.status[data-kind="ok"] {
-  color: #1b7a32;
-  font-weight: 800;
-}
-
 .status[data-kind="error"] {
   color: var(--red);
   font-weight: 800;
@@ -241,32 +190,9 @@ canvas {
   font-size: 13px;
 }
 
-.how {
-  margin-top: 22px;
-}
-
-.how h2 {
-  margin: 0 0 8px;
-}
-
-.how ol {
-  margin: 0;
-  padding-left: 18px;
-}
-
-.how li + li {
-  margin-top: 6px;
-}
-
 @media (max-width: 840px) {
-  .hero,
   .controls,
   .stage {
     grid-template-columns: 1fr;
-    display: grid;
-  }
-
-  .hero {
-    align-items: start;
   }
 }
